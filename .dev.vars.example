@@ -1,0 +1,4 @@
+# Copy to .dev.vars and fill in. (In production: npx wrangler secret put NX_PASSWORD etc.)
+NX_USERNAME=you@example.com
+NX_PASSWORD=your-nx-password
+NX_SYSTEM_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx

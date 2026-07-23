@@ -1,0 +1,10 @@
+node_modules
+.wrangler
+dist
+
+# local secrets - keep the example, ignore the real one
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+
+.DS_Store
