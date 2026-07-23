@@ -10,6 +10,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/setup") return setup(env, url.origin);
+    if (url.pathname === "/cameras") return cameras(env);
     if (url.pathname === "/ingest") return ingest(env);
     if (url.pathname === "/events") return events(env);
     return json({ ok: true, routes: ["/setup", "/ingest", "/events"] });
@@ -30,6 +31,33 @@ async function events(env) {
   return json({ count: results.length, events: results });
 }
 
+// log in to NX -> { relay, token }
+async function login(env) {
+  const relay = `https://${env.NX_SYSTEM_ID}.relay.vmsproxy.com`;
+  const tok = await (
+    await fetch("https://nxvms.com/cdb/oauth2/token", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "password",
+        response_type: "token",
+        client_id: "3rdParty",
+        username: env.NX_USERNAME,
+        password: env.NX_PASSWORD,
+        scope: `cloudSystemId=${env.NX_SYSTEM_ID}`,
+      }),
+    })
+  ).json();
+  return { relay, token: tok.access_token };
+}
+
+// list every camera on the system
+async function cameras(env) {
+  const { relay, token } = await login(env);
+  const cams = await nx(relay, token, "/ec2/getCamerasEx");
+  return json(cams.map((c) => ({ id: c.id, name: c.name })));
+}
+
 // ---- 1 + 2. create the table + the rule on the camera ----
 async function setup(env, origin) {
   await env.DB.prepare(
@@ -40,28 +68,12 @@ async function setup(env, origin) {
   if (!NX_USERNAME || !NX_PASSWORD || !NX_SYSTEM_ID)
     return json({ error: "Set NX_USERNAME, NX_PASSWORD and NX_SYSTEM_ID in .dev.vars" }, 400);
 
-  const relay = `https://${NX_SYSTEM_ID}.relay.vmsproxy.com`;
-
-  // log in (Nx Cloud / email account -> OAuth2 bearer token)
-  const tok = await (
-    await fetch("https://nxvms.com/cdb/oauth2/token", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "password",
-        response_type: "token",
-        client_id: "3rdParty",
-        username: NX_USERNAME,
-        password: NX_PASSWORD,
-        scope: `cloudSystemId=${NX_SYSTEM_ID}`,
-      }),
-    })
-  ).json();
-  if (!tok.access_token) return json({ error: "NX login failed", detail: tok }, 502);
+  const { relay, token } = await login(env);
+  if (!token) return json({ error: "NX login failed" }, 502);
 
   // pick the first camera on the system
-  const cameras = await nx(relay, tok.access_token, "/ec2/getCamerasEx");
-  const cam = Array.isArray(cameras) && cameras[0];
+  const cams = await nx(relay, token, "/ec2/getCamerasEx");
+  const cam = Array.isArray(cams) && cams[0];
   if (!cam) return json({ error: "No cameras on this system" }, 404);
 
   // soft-trigger rule → POST /ingest. Shows as "Test Event" on the camera.
@@ -86,7 +98,7 @@ async function setup(env, origin) {
     actionResourceIds: [],
     disabled: false,
   };
-  const saved = await nx(relay, tok.access_token, "/ec2/saveEventRule", rule);
+  const saved = await nx(relay, token, "/ec2/saveEventRule", rule);
 
   return json({ camera: cam.name, ruleId: saved.id });
 }
